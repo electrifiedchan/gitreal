@@ -1,0 +1,49 @@
+# Security - NEVER COMMIT
+.env
+.env.local
+.env.*
+*.env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.eggs/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+.next/
+.pnp/
+.pnp.js
+.yarn/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temp files
+*.log
+*.tmp
+temp_*
+*.webm
+test.pdf
+
+# Build outputs
+out/
+coverage/
+.vercel/
+

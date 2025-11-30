@@ -2,9 +2,17 @@
 
 <div align="center">
 
+![GitReal Banner](https://img.shields.io/badge/GitReal-Matrix%20Themed-00FF41?style=for-the-badge&logo=matrix&logoColor=white)
+
 **"Welcome to the Real World"**
 
-A Matrix-themed application that analyzes your resume against your actual GitHub code to expose false claims and provide brutal honesty.
+🔴 *Take the Red Pill* - Get brutally roasted on your resume vs actual code
+🔵 *Take the Blue Pill* - Rewrite your resume with AI assistance
+
+[![Next.js](https://img.shields.io/badge/Next.js-15-black?style=flat-square&logo=next.js)](https://nextjs.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Python-009688?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)
+[![Gemini](https://img.shields.io/badge/Gemini-2.5%20Flash-4285F4?style=flat-square&logo=google)](https://deepmind.google/technologies/gemini/)
+[![Deepgram](https://img.shields.io/badge/Deepgram-Voice%20AI-13EF93?style=flat-square)](https://deepgram.com/)
 
 </div>
 
@@ -12,33 +20,42 @@ A Matrix-themed application that analyzes your resume against your actual GitHub
 
 ## 🎯 Overview
 
-GitReal is an AI-powered resume verification tool that cross-references your resume claims with your actual GitHub repositories. It provides:
+GitReal is an AI-powered resume verification tool that cross-references your resume claims with your actual GitHub repositories. Built for a hackathon, it provides:
 
-- **Brutal Resume Analysis** - AI-powered critique of your resume vs. actual code
-- **Defense Mode** - Technical interview questions based on your code weaknesses
-- **ATS Resume Compiler** - Generate ATS-optimized resumes with code evidence
+- **🔥 Brutal Resume Analysis** - AI-powered critique comparing resume vs. actual code
+- **🎤 Voice Interview Mode** - Real-time voice conversations powered by Deepgram
+- **📝 ATS Resume Compiler** - Generate optimized resumes with code evidence
+- **🎯 Project-Specific Analysis** - Choose which project to analyze
 
 ## ✨ Features
 
 ### 🔴 Red Pill - "Roast Me" Mode
 - Upload your resume (PDF)
-- Automatic GitHub repository detection
-- AI analysis comparing resume claims vs. actual code
+- **Gemini OCR extracts all projects** from your resume
+- **Choose which project** to get roasted on
+- AI fetches and analyzes your actual GitHub code
 - Three-part verdict:
   - **Real World Critique** - Architectural and code quality issues
   - **False Claims** - Discrepancies between resume and code
-  - **Resume Additions** - Skills and achievements you should add
+  - **Resume Additions** - Skills you should highlight
 
-### 🔵 Blue Pill - "Defense Mode"
-- Technical interview simulation
-- Questions generated from your code weaknesses
-- Interactive chat-based interrogation
-- Tests your actual understanding of your own code
+### 🔵 Blue Pill - "Rewrite Me" Mode
+- Same project selection flow
+- AI-assisted resume improvement
+- Interactive chat to refine content
+- Generate ATS-optimized bullet points
+
+### 🎤 Voice Interview Mode
+- **Real-time voice conversations** with AI interviewer
+- Powered by **Deepgram** (STT + TTS)
+- **Gemini 2.5 Pro** as the AI brain
+- Push-to-talk interface
+- Tests your actual understanding of your code
 
 ### 📄 ATS Resume Compiler
-- Generates ATS-optimized resume
+- Generates ATS-optimized content
 - Injects code evidence into bullet points
-- Adds relevant technical keywords
+- Project-specific optimization
 - Professional, action-oriented tone
 
 ## 🚀 Tech Stack
@@ -46,17 +63,23 @@ GitReal is an AI-powered resume verification tool that cross-references your res
 ### Frontend
 - **Next.js 15** - React framework
 - **TypeScript** - Type safety
-- **Tailwind CSS** - Styling
+- **Tailwind CSS** - Matrix-themed styling
 - **Axios** - HTTP client
-- **Framer Motion** - Animations
 - **Lucide React** - Icons
+- **MediaRecorder API** - Voice recording
 
 ### Backend
 - **FastAPI** - Python web framework
-- **Google Gemini 2.0 Flash** - AI model
+- **Google Gemini 2.5 Flash** - AI model for analysis
+- **Deepgram** - Speech-to-Text & Text-to-Speech
 - **PyPDF** - PDF parsing
 - **GitHub API** - Repository analysis
 - **Python 3.11+**
+
+### AI Stack
+- **Gemini 2.5 Flash** - Resume analysis, OCR, chat
+- **Deepgram Nova-2** - Speech recognition
+- **Deepgram Aura** - Voice synthesis
 
 ## 📦 Installation
 
@@ -88,6 +111,7 @@ GitReal is an AI-powered resume verification tool that cross-references your res
 4. **Create `.env` file:**
    ```env
    GEMINI_API_KEY=your_gemini_api_key_here
+   DEEPGRAM_API_KEY=your_deepgram_api_key_here
    GITHUB_TOKEN=your_github_token_here  # Optional
    ```
 
@@ -119,29 +143,30 @@ GitReal is an AI-powered resume verification tool that cross-references your res
 
 ### Step 1: Upload Resume
 - Upload your resume (PDF format)
-- System automatically extracts GitHub URL from resume
-- If not found, you can manually add repositories
+- Gemini OCR extracts all projects automatically
 
-### Step 2: Choose Your Reality
+### Step 2: Select Project
+- See list of projects found in your resume
+- Choose which one to analyze
+- Or enter GitHub URL manually
+
+### Step 3: Choose Your Reality
 
 **🔴 Red Pill - "Roast Me"**
-- Get brutal honest feedback
+- Get brutal honest feedback on selected project
 - See verdict with code evidence
-- Chat with AI about improvements
-- Compile ATS-optimized resume
+- Voice interview option available
 
-**🔵 Blue Pill - "Defense Mode"**
-- Face technical interview questions
-- Questions based on your code weaknesses
-- Prove you actually wrote the code
-- Interactive interrogation
+**🔵 Blue Pill - "Rewrite Me"**
+- AI-assisted resume improvement
+- Project-specific suggestions
+- Generate ATS-optimized content
 
-### Step 3: Take Action
-- Review the analysis
-- Add missing skills to resume
-- Fix false claims
-- Generate new ATS resume
-- Prepare for real interviews
+### Step 4: Voice Interview (Optional)
+- Click "Voice Interview" button
+- Hold microphone to speak
+- AI responds with voice
+- Real-time conversation about your code
 
 ## 🏗️ Project Structure
 
@@ -168,9 +193,14 @@ gitreal/
 
 ## 🔌 API Endpoints
 
+### `POST /extract_projects`
+Extracts projects from resume using Gemini OCR
+- **Input:** Resume PDF
+- **Output:** List of projects with GitHub URLs
+
 ### `POST /analyze`
 Analyzes resume against GitHub code
-- **Input:** Resume PDF, GitHub URL (optional)
+- **Input:** Resume PDF, GitHub URL
 - **Output:** Analysis JSON with critique, false claims, suggestions
 
 ### `POST /chat`
@@ -178,20 +208,25 @@ Interactive chat with AI
 - **Input:** Message, conversation history
 - **Output:** AI response
 
-### `POST /interview_start`
-Generates interview question
+### `POST /listen`
+Speech-to-Text via Deepgram
+- **Input:** Audio file (webm)
+- **Output:** Transcribed text
+
+### `POST /speak`
+Text-to-Speech via Deepgram
+- **Input:** Text
+- **Output:** Audio stream (MP3)
+
+### `POST /interview_start_voice`
+Starts voice interview session
 - **Input:** None (uses cached analysis)
-- **Output:** Technical interview question
+- **Output:** Initial interview question
 
-### `POST /generate_resume`
-Compiles ATS-optimized resume
-- **Input:** None (uses cached data)
-- **Output:** Markdown-formatted resume
-
-### `POST /add_repo`
-Adds additional repository to analysis
-- **Input:** GitHub URL
-- **Output:** STAR method bullet points
+### `POST /interview_respond_voice`
+Responds in voice interview
+- **Input:** User's answer text
+- **Output:** AI follow-up question
 
 ## 🎨 Design Features
 
@@ -232,12 +267,19 @@ Adds additional repository to analysis
 ### Backend `.env`
 ```env
 GEMINI_API_KEY=your_gemini_api_key
-GITHUB_TOKEN=your_github_token  # Optional
+DEEPGRAM_API_KEY=your_deepgram_api_key
+GITHUB_TOKEN=your_github_token  # Optional, for private repos
 ```
+
+## 🖼️ Screenshots
+
+| Landing | Project Selection | Roast Results |
+|---------|------------------|---------------|
+| Matrix-themed upload | Choose your project | Brutal analysis |
 
 ## 🤝 Contributing
 
-This is a personal project, but suggestions are welcome!
+This is a hackathon project, but suggestions are welcome!
 
 ## 📄 License
 
@@ -245,9 +287,10 @@ MIT License - Feel free to use and modify
 
 ## 🙏 Acknowledgments
 
-- Inspired by The Matrix
-- Powered by Google Gemini AI
-- Built with Next.js and FastAPI
+- Inspired by **The Matrix**
+- AI powered by **Google Gemini 2.5**
+- Voice powered by **Deepgram**
+- Built with **Next.js** and **FastAPI**
 
 ---
 
@@ -255,6 +298,6 @@ MIT License - Feel free to use and modify
 
 **"Remember, all I'm offering is the truth. Nothing more."**
 
-Made with 💚 and brutal honesty
+Made with 💚 and brutal honesty by [@electrifiedchan](https://github.com/electrifiedchan)
 
 </div>
