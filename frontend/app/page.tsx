@@ -745,9 +745,10 @@ const Dashboard = ({ onNavigate, uploadedFile, selectedProject }: { onNavigate: 
     const fetchData = async () => {
       if (!uploadedFile) {
         setData({
-          project_critique: ["No resume uploaded"],
-          false_claims: ["Unable to verify"],
-          resume_suggestions: ["Please upload a resume"]
+          matches: ["No resume uploaded"],
+          red_flags: ["Unable to verify"],
+          missing_gems: ["Please upload a resume"],
+          summary: "No data available."
         });
         return;
       }
@@ -756,9 +757,12 @@ const Dashboard = ({ onNavigate, uploadedFile, selectedProject }: { onNavigate: 
       const formData = new FormData();
       formData.append("file", uploadedFile);
 
-      // Pass the selected project's GitHub URL
+      // Pass the selected project's GitHub URL and name
       if (selectedProject?.github_url) {
         formData.append("github_url", selectedProject.github_url);
+      }
+      if (selectedProject?.name) {
+        formData.append("project_name", selectedProject.name);
       }
 
       try {
@@ -768,9 +772,10 @@ const Dashboard = ({ onNavigate, uploadedFile, selectedProject }: { onNavigate: 
       } catch (e) {
         console.error(e);
         setData({
-          project_critique: ["Error analyzing project"],
-          false_claims: ["Could not verify claims"],
-          resume_suggestions: ["Try again with a different project"]
+          matches: [],
+          red_flags: ["Error analyzing project - Could not verify claims."],
+          missing_gems: [],
+          summary: "Analysis failed. Try again with a different project."
         });
       } finally {
         setLoading(false);
@@ -799,41 +804,53 @@ const Dashboard = ({ onNavigate, uploadedFile, selectedProject }: { onNavigate: 
         <button onClick={() => onNavigate('landing')} className="text-xs hover:text-white">[ DISCONNECT ]</button>
       </header>
 
+      {/* Summary Banner */}
+      {data.summary && (
+        <div className="mb-8 p-4 bg-black border-2 border-[#00FF41] shadow-[0_0_30px_rgba(0,255,65,0.3)]">
+          <p className="text-[#00FF41] font-mono text-center text-lg">
+            📋 <span className="font-bold">VERDICT:</span> {data.summary}
+          </p>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
 
-        {/* Critique */}
+        {/* Verified Matches (Green) */}
         <div className="bg-black border border-[#00FF41] p-6 shadow-[0_0_15px_rgba(0,255,65,0.1)]">
           <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-[#00FF41]">
-            <AlertTriangle className="w-5 h-5" /> REAL WORLD CRITIQUE
+            <CheckCircle className="w-5 h-5" /> VERIFIED SKILLS
           </h3>
           <ul className="space-y-2 text-sm text-green-300/80 font-mono">
-            {data.project_critique?.map((m: string, i: number) => (
+            {data.matches?.length > 0 ? data.matches.map((m: string, i: number) => (
               <li key={i} className="flex items-start gap-2"><div className="w-1 h-1 bg-[#00FF41] mt-2"></div>{m}</li>
-            )) || <li>No critique available.</li>}
+            )) : <li className="text-gray-500">No verified matches found.</li>}
           </ul>
         </div>
 
-        {/* False Claims */}
-        <div className="bg-black border border-red-600 p-6 shadow-[0_0_15px_rgba(255,50,50,0.1)]">
-          <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-red-500 glitch" data-text="LIES DETECTED">
-            <ShieldAlert className="w-5 h-5" /> FALSE CLAIMS
+        {/* Red Flags (Red - PHANTOMWARE) */}
+        <div className="bg-black border-2 border-red-600 p-6 shadow-[0_0_20px_rgba(255,50,50,0.3)] animate-pulse-slow">
+          <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-red-500 glitch" data-text="🚩 RED FLAGS">
+            <ShieldAlert className="w-5 h-5 animate-pulse" /> 🚩 RED FLAGS
           </h3>
-          <ul className="space-y-2 text-sm text-red-300/80 font-mono">
-            {data.false_claims?.map((m: string, i: number) => (
-              <li key={i} className="flex items-start gap-2"><div className="w-1 h-1 bg-red-500 mt-2"></div>{m}</li>
-            )) || <li>No false claims detected.</li>}
+          <ul className="space-y-3 text-sm text-red-300 font-mono">
+            {data.red_flags?.length > 0 ? data.red_flags.map((m: string, i: number) => (
+              <li key={i} className="flex items-start gap-2 bg-red-900/20 p-2 border-l-2 border-red-500">
+                <div className="w-2 h-2 bg-red-500 mt-1.5 animate-pulse"></div>
+                <span>{m}</span>
+              </li>
+            )) : <li className="text-green-500">✅ No red flags detected! Clean record.</li>}
           </ul>
         </div>
 
-        {/* Suggestions */}
+        {/* Missing Gems (Yellow) */}
         <div className="bg-black border border-yellow-400 p-6 shadow-[0_0_15px_rgba(255,255,50,0.1)]">
           <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-yellow-400">
-            <CheckCircle className="w-5 h-5" /> RESUME ADDITIONS
+            <AlertTriangle className="w-5 h-5" /> 💎 HIDDEN GEMS
           </h3>
           <ul className="space-y-2 text-sm text-yellow-200/80 font-mono">
-            {data.resume_suggestions?.map((m: string, i: number) => (
+            {data.missing_gems?.length > 0 ? data.missing_gems.map((m: string, i: number) => (
               <li key={i} className="flex items-start gap-2"><div className="w-1 h-1 bg-yellow-500 mt-2"></div>{m}</li>
-            )) || <li>No suggestions.</li>}
+            )) : <li className="text-gray-500">No hidden gems found.</li>}
           </ul>
         </div>
 

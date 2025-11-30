@@ -190,26 +190,26 @@ async def extract_projects(file: UploadFile = File(...)):
 @app.post("/analyze")
 async def analyze_portfolio(
     file: UploadFile = File(...),
-    github_url: Optional[str] = Form(None)
+    github_url: Optional[str] = Form(None),
+    project_name: Optional[str] = Form(None)
 ):
     print(f"📥 Received Analysis Request.")
+    print(f"   📁 Selected Project: {project_name or 'None specified'}")
     temp_filename = f"temp_{file.filename}"
     with open(temp_filename, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-    
+
     try:
         resume_text = ingest_pdf.parse_pdf(temp_filename)
-        
-        target_url = github_url
-        if not target_url or target_url == "null":
-            # Attempt to find in resume
-            # Look for github.com/username/repo
-            match = re.search(r"github\.com/([a-zA-Z0-9-_]+)/([a-zA-Z0-9-_]+)", resume_text)
-            if match:
-                target_url = f"https://{match.group(0)}"
-                print(f"   🕵️‍♀️ Found GitHub URL in Resume: {target_url}")
-            else:
-                target_url = None
+
+        # IMPORTANT: Only use the URL explicitly provided by user's project selection
+        # Do NOT auto-scan resume for GitHub URLs - user chose a specific project
+        target_url = github_url if github_url and github_url != "null" and github_url.strip() else None
+
+        if target_url:
+            print(f"   🎯 Using selected project URL: {target_url}")
+        else:
+            print(f"   ⚠️ No GitHub URL provided - analyzing resume claims only (PHANTOMWARE CHECK)")
 
         code_context = ""
         if target_url:
@@ -228,12 +228,15 @@ async def analyze_portfolio(
             else:
                 code_context = "Error: Invalid URL extracted."
         else:
-            code_context = "No GitHub URL found in resume or provided."
+            # No GitHub provided = PHANTOMWARE CHECK MODE
+            # AI will flag all project claims as "unverified" since there's no code to prove them
+            code_context = "⚠️ NO CODE PROVIDED. This project has NO GitHub link. All claims are UNVERIFIED and should be flagged as potential PHANTOMWARE."
 
         if os.path.exists(temp_filename):
             os.remove(temp_filename)
 
-        analysis_json = brain.analyze_resume_vs_code(resume_text, code_context)
+        # Pass project_name to focus the analysis on ONLY that project
+        analysis_json = brain.analyze_resume_vs_code(resume_text, code_context, project_name)
         
         # Parse JSON to construct chat message
         import json

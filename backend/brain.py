@@ -10,7 +10,7 @@ load_dotenv()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 # --- CONFIGURATION ---
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-2.5-pro"
 LIVE_MODEL = "gemini-2.5-flash-preview-native-audio-dialog"  # For Live API
 
 generation_config = {
@@ -29,46 +29,135 @@ chat_model = genai.GenerativeModel(MODEL_NAME)
 voice_chat_session = None
 live_session_context = None  # Store context for Live API
 
+
+# --- SMART MODEL FALLBACK + RETRY LOGIC ---
+FALLBACK_MODELS = ["gemini-2.5-pro", "gemini-2.5-flash"]
+
+def is_quota_error(error):
+    """Check if an error is a quota/rate limit error."""
+    error_str = str(error).lower()
+    return any(x in error_str for x in ["quota", "rate", "resource", "429", "retry_delay", "exhausted"])
+
+
+def gemini_generate_with_retry(model_instance, prompt, max_retries=2):
+    """
+    Call Gemini's generate_content with automatic retry on rate limits.
+    If quota is exhausted, tries fallback models automatically.
+    """
+    # First try with the provided model
+    try:
+        response = model_instance.generate_content(prompt)
+        return response
+    except Exception as e:
+        if not is_quota_error(e):
+            raise e
+        print(f"   ⚠️ Primary model quota exhausted: {e}")
+
+    # Try fallback models
+    for fallback_model_name in FALLBACK_MODELS:
+        try:
+            print(f"   🔄 Trying fallback model: {fallback_model_name}...")
+            fallback_model = genai.GenerativeModel(fallback_model_name)
+            response = fallback_model.generate_content(prompt)
+            print(f"   ✅ Success with {fallback_model_name}")
+            return response
+        except Exception as e:
+            if is_quota_error(e):
+                print(f"   ❌ {fallback_model_name} also quota limited")
+                continue
+            else:
+                raise e
+
+    # All models failed - wait and retry once more
+    print(f"   ⏳ All models quota limited. Waiting 35s...")
+    time.sleep(35)
+
+    # Final attempt with primary model after wait
+    try:
+        response = model_instance.generate_content(prompt)
+        return response
+    except Exception as e:
+        raise Exception(f"All Gemini models are quota limited. Please wait 1-2 minutes and try again. Error: {e}")
+
+
+def gemini_generate_json_with_retry(prompt, max_retries=2):
+    """
+    Special function for JSON generation - tries multiple models with JSON config.
+    """
+    json_config = {"response_mime_type": "application/json"}
+
+    for model_name in FALLBACK_MODELS:
+        try:
+            print(f"   🤖 Trying {model_name} for JSON generation...")
+            json_model = genai.GenerativeModel(model_name, generation_config=json_config)
+            response = json_model.generate_content(prompt)
+            print(f"   ✅ Success with {model_name}")
+            return response
+        except Exception as e:
+            if is_quota_error(e):
+                print(f"   ❌ {model_name} quota limited, trying next...")
+                continue
+            else:
+                raise e
+
+    # All failed - wait and retry
+    print(f"   ⏳ All models quota limited. Waiting 35s...")
+    time.sleep(35)
+
+    # Final attempt
+    json_model = genai.GenerativeModel(FALLBACK_MODELS[0], generation_config=json_config)
+    return json_model.generate_content(prompt)
+
 def extract_projects_from_resume(resume_text):
     """
     Uses Gemini to extract project names and GitHub URLs from resume text.
     Returns list of projects with name, description, and github_url.
     """
-    json_model = genai.GenerativeModel("gemini-2.5-flash", generation_config={"response_mime_type": "application/json"})
+    # Debug: Print resume length and preview
+    print(f"   📄 Resume Length: {len(resume_text)} characters")
+    print(f"   📄 Resume Preview: {resume_text[:500]}...")
 
     prompt = f"""
-    You are a resume parser. Extract ALL projects mentioned in this resume.
+    You are a resume parser for GitReal - a tool that verifies resume claims against code.
+
+    Your job is to extract ALL projects/experiences from this resume - ESPECIALLY ones WITHOUT GitHub links.
+    Projects without GitHub links are IMPORTANT because they need to be flagged as "unverified claims".
 
     RESUME TEXT:
+    ---
     {resume_text}
+    ---
 
-    For each project, extract:
-    1. Project name
-    2. Brief description (1 line)
-    3. GitHub URL if mentioned (look for github.com links)
-    4. Technologies used
+    EXTRACT ALL OF THESE:
+    1. ✅ Projects WITH GitHub URLs (these can be verified)
+    2. ⚠️ Projects WITHOUT GitHub URLs (these are UNVERIFIED - still include them!)
+    3. ⚠️ Hackathon participations (with or without links)
+    4. ⚠️ Work experience projects
+    5. ⚠️ Any claimed achievements/builds
 
-    OUTPUT JSON (array of projects):
+    OUTPUT JSON FORMAT:
     {{
         "projects": [
             {{
-                "name": "Project Name",
-                "description": "Brief 1-line description",
-                "github_url": "https://github.com/user/repo or null if not found",
-                "technologies": ["Python", "React", "etc"]
+                "name": "Project or Hackathon Name",
+                "description": "What they claimed to build/do",
+                "github_url": "https://github.com/... OR null if NO link provided",
+                "technologies": ["tech1", "tech2"]
             }}
         ]
     }}
 
-    IMPORTANT:
-    - Extract ALL projects, even if no GitHub URL
-    - Look for patterns like: github.com/username/repo, GitHub: url, etc.
-    - If you find a GitHub profile (github.com/username), list it separately
-    - Be thorough - check education projects, work projects, personal projects
+    CRITICAL RULES:
+    1. Extract EVERY project mentioned, even if there's NO GitHub link
+    2. Hackathons like "ETHIndia", "HackBangalore", "VIBEATHON" are projects - include them!
+    3. If no GitHub URL is found for a project, set github_url to null (NOT empty string)
+    4. Do NOT invent projects - only extract what's actually written in the resume
+    5. Look for keywords: "Built", "Developed", "Created", "Hackathon", "Project", "Application"
     """
 
     try:
-        response = json_model.generate_content(prompt)
+        # Use smart model fallback for rate limits
+        response = gemini_generate_json_with_retry(prompt)
         result = json.loads(response.text)
         print(f"📋 Extracted {len(result.get('projects', []))} projects from resume")
         return result.get("projects", [])
@@ -88,47 +177,111 @@ def extract_projects_from_resume(resume_text):
         return projects if projects else [{"name": "No projects found", "description": "Please enter GitHub URL manually", "github_url": None, "technologies": []}]
 
 
-def analyze_resume_vs_code(resume_text, code_context):
+def analyze_resume_vs_code(resume_text, code_context, project_name=None):
     """
-    Returns strict JSON analysis + STAR Bullets.
+    The 'Roast' Function. Returns strict JSON analysis.
+    Now upgraded to detect 'Phantom Projects' (Claims with no links).
+    If project_name is provided, focuses ONLY on that specific project.
     """
-    # We want JSON for the dashboard cards
-    json_model = genai.GenerativeModel("gemini-2.5-flash", generation_config={"response_mime_type": "application/json"})
-    
-    prompt = f"""
-    You are 'GitReal', a ruthless Senior Engineer.
-    
-    TASK: Analyze the Candidate's Resume against their Code.
-    RESUME: {resume_text[:2000]}
-    CODE: {code_context[:50000]}
+    # Check if this is a "no code" scenario (PHANTOMWARE mode)
+    no_code_provided = "NO CODE PROVIDED" in code_context or len(code_context) < 100
 
-    OUTPUT JSON (Strictly these 3 keys):
-    {{
-        "project_critique": [
-            "Criticize the project compared to real-world/FAANG standards.",
-            "E.g. 'Code is monolithic, lacks microservices pattern.'",
-            "E.g. 'No unit tests found, risky for production.'"
-        ],
-        "false_claims": [
-            "Check Resume vs Repo for lies/exaggerations.",
-            "E.g. 'Resume says Expert in AWS, but no AWS config found.'",
-            "E.g. 'Claims CI/CD pipeline, but no .github/workflows.'"
-        ],
-        "resume_suggestions": [
-            "What SPECIFIC things should be added to the resume based on this code?",
-            "E.g. 'Add 'Multithreading' - found complex threading in main.c'",
-            "E.g. 'Highlight 'Optimization' - found custom memory allocator.'"
-        ]
-    }}
+    # Build project-specific instruction if a project was selected
+    project_focus = ""
+    if project_name:
+        project_focus = f"""
+    ⚠️ CRITICAL INSTRUCTION - FOCUS ON ONE PROJECT ONLY:
+    The user has selected the project: "{project_name}"
+
+    ONLY analyze THIS specific project. Do NOT mention or flag other projects from the resume.
+    Ignore all other projects, hackathons, or experiences - focus 100% on "{project_name}".
     """
+
+    # Special prompt for PHANTOMWARE mode (no code provided)
+    if no_code_provided and project_name:
+        prompt = f"""
+        You are 'GitReal', a Forensic Resume Auditor.
+
+        The user selected the project "{project_name}" but provided NO GitHub link or code.
+
+        RESUME TEXT:
+        {resume_text[:4000]}
+
+        YOUR TASK:
+        Find the project "{project_name}" in the resume and flag ALL its claims as UNVERIFIED/PHANTOMWARE since no code was provided.
+
+        OUTPUT JSON FORMAT (use EXACTLY these 4 keys):
+        {{
+            "matches": [],
+            "red_flags": [
+                "🚩 PHANTOMWARE: Project '{project_name}' has NO GitHub link - all claims are unverified.",
+                "🚩 UNVERIFIED: [List each specific claim from this project that cannot be verified]"
+            ],
+            "missing_gems": [],
+            "summary": "Project '{project_name}' cannot be verified - no code evidence provided. All claims are PHANTOMWARE."
+        }}
+
+        Extract the specific claims made about "{project_name}" and list each one as a red flag since there's no code to prove it.
+        """
+    else:
+        prompt = f"""
+        You are 'GitReal', a ruthless Senior Staff Engineer and Forensic Resume Auditor.
+        {project_focus}
+
+        INPUT DATA:
+        1. CANDIDATE RESUME (The Claims):
+        {resume_text[:4000]}
+
+        2. ACTUAL CODEBASE (The Evidence):
+        {code_context[:50000] if code_context else "NO CODE PROVIDED"}
+
+        YOUR MISSION:
+        {"Analyze ONLY the project '" + project_name + "' - ignore everything else on the resume." if project_name else "Perform a gap analysis between what the candidate *says* they did and what they can *prove* they did."}
+
+        CRITICAL CHECKS:
+        1. **Phantom Projects:** If NO code was provided for this project, flag it as PHANTOMWARE - claims without proof.
+        2. **Skill Inflation:** If Resume says "Expert in X" but Code only contains "Basic Y", flag it.
+        3. **Reality Check:** If claims don't match the code quality/complexity, call it out.
+
+        OUTPUT JSON FORMAT (Strict - use EXACTLY these 4 keys):
+        {{
+            "matches": [
+                "✅ Verified: Python skills confirmed via 'data_loader.py'",
+                "✅ Verified: API integration found in 'routes.js'"
+            ],
+            "red_flags": [
+                "🚩 PHANTOMWARE: Claimed 'Won Hackathon' but provided NO LINK to the project.",
+                "🚩 UNVERIFIED: Lists 'Microservices Architecture' but no repo provided to prove it.",
+                "🚩 SECURITY: Hardcoded secrets found in 'config.py'."
+            ],
+            "missing_gems": [
+                "💎 Found 'Docker' usage in code, but not listed on Resume.",
+                "💎 Code demonstrates 'AsyncIO' patterns - add this to skills."
+            ],
+            "summary": "Brief verdict on THIS project only."
+        }}
+        """
+
     try:
-        response = json_model.generate_content(prompt)
+        print(f"   🧠 Analyzing project: {project_name or 'ALL'} | Code provided: {not no_code_provided}")
+        # Use smart model fallback for rate limits
+        response = gemini_generate_json_with_retry(prompt)
         return response.text
     except Exception as e:
+        print(f"   ❌ Gemini Error: {e}")
+        # Return a valid PHANTOMWARE response for no-code projects
+        if no_code_provided and project_name:
+            return json.dumps({
+                "matches": [],
+                "red_flags": [f"🚩 PHANTOMWARE: Project '{project_name}' has NO GitHub link - cannot verify any claims."],
+                "missing_gems": [],
+                "summary": f"Project '{project_name}' is UNVERIFIED. No code provided to substantiate claims."
+            })
         return json.dumps({
-            "project_critique": ["Error analyzing project."],
-            "false_claims": ["Could not verify claims."],
-            "resume_suggestions": ["System Error."]
+            "matches": [],
+            "red_flags": [f"System Error: {str(e)}"],
+            "missing_gems": [],
+            "summary": "Analysis failed."
         })
 
 def generate_star_bullets(code_context):
@@ -197,32 +350,32 @@ def get_chat_response(history, message, context):
 
 def generate_interview_challenge(code_context, analysis_json):
     """
-    Generates a tough technical question based on the code's weak points.
+    Generates a tough technical question - attacks Phantom Projects first.
     """
     prompt = f"""
-    You are 'GitReal', a skeptcial Technical Interviewer.
-    You have analyzed this candidate's code and found some issues.
-    
-    ANALYSIS SUMMARY:
+    Act as a skeptical CTO conducting a stress interview.
+
+    PREVIOUS ANALYSIS:
     {analysis_json}
-    
+
     RAW CODE SEGMENT:
     {code_context[:20000]}
 
-    YOUR TASK:
-    Generate ONE hard, specific technical interview question to test if the candidate actually wrote this code or understands it.
-    - Pick a specific file or function from the code.
-    - Ask why they chose that specific implementation over a better alternative.
-    - Be direct and intimidating.
-    
+    INSTRUCTIONS:
+    1. Look at the 'red_flags' in the analysis.
+    2. If there are "PHANTOMWARE" or "UNVERIFIED" claims (e.g., projects mentioned in resume but missing from code), ATTACK THAT FIRST.
+    3. Ask: "You mentioned [Project Name] in your resume, but I see no code for it. Explain the specific architecture you used, or admit it doesn't exist."
+    4. If no phantom projects, pick a specific file/function and ask a hard technical question about implementation choices.
+    5. Be direct and intimidating. No mercy.
+
     OUTPUT:
-    Just the question. No greetings.
+    Just the question. Short. Direct. Intimidating. No greetings or preamble.
     """
     try:
         response = model.generate_content(prompt)
         return response.text
     except:
-        return "Explain the architecture of your main API handler. Why is it structured this way?"
+        return "You list projects without links. Explain the tech stack of your most complex unlisted project, right now."
 
 def generate_ats_resume(resume_text, code_context):
     """
