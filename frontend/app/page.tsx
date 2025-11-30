@@ -1723,20 +1723,32 @@ const ChatInterface = ({ onNavigate, uploadedFile, mode, selectedProject }: { on
     }
   }, [mode]);
 
+  // Reset chatInitialized when component unmounts or mode changes
+  useEffect(() => {
+    return () => {
+      // Cleanup on unmount
+    };
+  }, []);
+
+  // Track if chat has been initialized
+  const chatInitialized = useRef(false);
+
   // Check for Interview Mode question on load
   useEffect(() => {
     const interviewQuestion = typeof window !== 'undefined' ? localStorage.getItem('interview_intro') : null;
     if (interviewQuestion && !interviewInitialized.current) {
       // INTERVIEW MODE - Don't call handleInit
       interviewInitialized.current = true;
+      chatInitialized.current = true;
       setInitialized(true);
       setMessages([
         { id: 1, type: 'system', text: '⚠️ DEFENSE MODE INITIATED. INTERROGATION LOGGED.' },
         { id: 2, type: 'ai', text: interviewQuestion }
       ]);
       localStorage.removeItem('interview_intro');
-    } else if (uploadedFile && !initialized && !interviewQuestion && mode === 'chat') {
-      // CHAT MODE ONLY - Initialize with file and selected project
+    } else if (uploadedFile && !initialized && !chatInitialized.current && !interviewQuestion && mode === 'chat') {
+      // CHAT MODE ONLY - Initialize with file and selected project (ONLY ONCE)
+      chatInitialized.current = true;
       handleInit(uploadedFile, selectedProject?.github_url || "");
     }
   }, [uploadedFile, mode, selectedProject]);
@@ -1764,6 +1776,9 @@ const ChatInterface = ({ onNavigate, uploadedFile, mode, selectedProject }: { on
   useEffect(scrollToBottom, [messages]);
 
   const handleInit = async (file: File, url: string) => {
+    // Prevent re-initialization if already initialized
+    if (initialized) return;
+
     setLoading(true);
     const formData = new FormData();
     formData.append("file", file);
@@ -1774,12 +1789,19 @@ const ChatInterface = ({ onNavigate, uploadedFile, mode, selectedProject }: { on
       setInitialized(true);
       const starAnalysis = res.data.initial_chat || "Analysis complete.";
       const projectInfo = selectedProject ? `📁 PROJECT: ${selectedProject.name}` : '';
-      setMessages(prev => [
-        { id: 1, type: 'system', text: 'ENCRYPTED CHANNEL ESTABLISHED.' },
-        ...(projectInfo ? [{ id: 1.5, type: 'system', text: projectInfo }] : []),
-        { id: 2, type: 'system', text: 'ASSETS ANALYZED. MEMORY LOADED.' },
-        { id: 3, type: 'ai', text: starAnalysis }
-      ]);
+      // Only set initial messages if there are none (fresh start)
+      setMessages(prev => {
+        if (prev.length > 0 && prev.some(m => m.type === 'user')) {
+          // User already has messages, don't wipe them
+          return prev;
+        }
+        return [
+          { id: 1, type: 'system', text: 'ENCRYPTED CHANNEL ESTABLISHED.' },
+          ...(projectInfo ? [{ id: 1.5, type: 'system', text: projectInfo }] : []),
+          { id: 2, type: 'system', text: 'ASSETS ANALYZED. MEMORY LOADED.' },
+          { id: 3, type: 'ai', text: starAnalysis }
+        ];
+      });
     } catch (e: any) {
       setMessages(prev => [...prev, { id: 3, type: 'system', text: `❌ ERROR: ${e.message}` }]);
     } finally {
