@@ -54,6 +54,93 @@ class TTSError(GitRealError):
     """Raised when text-to-speech fails"""
     pass
 
+class InvalidResumeError(GitRealError):
+    """Raised when uploaded file is not a valid resume"""
+    pass
+
+
+# --- RESUME GATEKEEPER (Validates document before processing) ---
+def validate_is_resume(text_content):
+    """
+    🛡️ THE GATEKEEPER: Checks if the uploaded text is actually a resume/CV.
+    Two-step validation:
+    1. Heuristic keyword check (fast, no API cost)
+    2. AI semantic check (smart, catches edge cases)
+
+    Returns: (True, "") or (False, "Reason")
+    """
+    # 1. HEURISTIC CHECK (Fast Fail) - Save API tokens
+    keywords = ["experience", "education", "skills", "projects", "summary",
+                "work history", "curriculum vitae", "contact", "employment",
+                "qualifications", "achievements", "responsibilities"]
+    text_lower = text_content.lower()
+    match_count = sum(1 for k in keywords if k in text_lower)
+
+    if match_count < 2:
+        return False, "This document lacks standard resume sections (Experience, Skills, Education)."
+
+    # 2. AI SEMANTIC CHECK (The Brain) - Catches JDs, menus, invoices
+    prompt = f"""
+    You are a Document Classifier.
+
+    TASK: Determine if the text below is a **Professional Resume/CV**.
+
+    CRITERIA FOR YES (is_resume: true):
+    - Contains professional work history, skills, or education.
+    - Structured like a candidate profile for job applications.
+    - Written from the perspective of a job seeker.
+
+    CRITERIA FOR NO (is_resume: false):
+    - It is a Job Description (JD) written by an employer seeking candidates.
+    - It is an invoice, receipt, menu, book, article, or random document.
+    - It is too short or lacks professional context (under 50 meaningful words).
+
+    TEXT SAMPLE (first 2000 chars):
+    {text_content[:2000]}
+
+    OUTPUT JSON ONLY:
+    {{
+        "is_resume": boolean,
+        "reason": "One sentence explanation."
+    }}
+    """
+
+    # Try with fallback models (Pro → Flash) to handle quota limits
+    validation_models = ["gemini-2.5-pro", "gemini-2.5-flash"]
+
+    for model_name in validation_models:
+        try:
+            logger.info(f"🔍 Validating document with {model_name}...")
+            validator_model = genai.GenerativeModel(
+                model_name,
+                generation_config={"response_mime_type": "application/json"}
+            )
+            response = validator_model.generate_content(prompt)
+            result = json.loads(response.text)
+
+            if result.get("is_resume", False):
+                logger.info(f"✅ Document validated as Resume/CV (using {model_name})")
+                return True, ""
+            else:
+                reason = result.get("reason", "Document does not appear to be a resume.")
+                logger.warning(f"❌ Document rejected: {reason}")
+                return False, reason
+
+        except Exception as e:
+            error_str = str(e).lower()
+            if any(x in error_str for x in ["quota", "rate", "resource", "429", "exhausted"]):
+                logger.warning(f"⚠️ {model_name} quota hit, trying fallback...")
+                continue  # Try next model
+            else:
+                # Non-quota error - log and continue to next model
+                logger.warning(f"⚠️ {model_name} error: {e}")
+                continue
+
+    # All models failed - fall back to heuristic result (which passed)
+    logger.warning("⚠️ All AI models failed, using heuristic result (lenient)")
+    return True, ""  # Be lenient on API errors to not block demos
+
+
 # Use Gemini 2.5 Flash
 model = genai.GenerativeModel(MODEL_NAME, generation_config=generation_config)
 chat_model = genai.GenerativeModel(MODEL_NAME)

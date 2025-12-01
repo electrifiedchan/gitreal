@@ -258,6 +258,44 @@ async def text_to_speech(text: str = Form(...)):
 
 # ============ CORE ENDPOINTS ============
 
+@app.post("/validate_resume")
+async def validate_resume(file: UploadFile = File(...)):
+    """
+    🛡️ THE GATEKEEPER: Validates if uploaded PDF is a resume BEFORE any processing.
+    Called immediately on file upload (at the gate).
+    """
+    # Validate file extension
+    is_valid, error_msg = validate_file_upload(file)
+    if not is_valid:
+        return {"valid": False, "reason": error_msg}
+
+    logger.info(f"🛡️ Gatekeeper checking: {file.filename}")
+    temp_filename = f"temp_validate_{file.filename}"
+
+    try:
+        with open(temp_filename, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        resume_text = ingest_pdf.parse_pdf(temp_filename)
+
+        # AI-powered validation with model fallback
+        is_resume, rejection_reason = brain.validate_is_resume(resume_text)
+
+        if is_resume:
+            logger.info(f"✅ Gatekeeper approved: {file.filename}")
+            return {"valid": True, "reason": ""}
+        else:
+            logger.warning(f"❌ Gatekeeper rejected: {rejection_reason}")
+            return {"valid": False, "reason": rejection_reason}
+
+    except Exception as e:
+        logger.error(f"❌ Gatekeeper error: {e}")
+        return {"valid": False, "reason": f"Error processing file: {str(e)}"}
+    finally:
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
+
+
 @app.post("/extract_projects")
 async def extract_projects(file: UploadFile = File(...)):
     """
@@ -279,6 +317,12 @@ async def extract_projects(file: UploadFile = File(...)):
 
         resume_text = ingest_pdf.parse_pdf(temp_filename)
 
+        # 🛡️ THE GATEKEEPER: Validate this is actually a resume/CV
+        is_valid, rejection_reason = brain.validate_is_resume(resume_text)
+        if not is_valid:
+            logger.warning(f"❌ Document rejected: {rejection_reason}")
+            raise HTTPException(status_code=400, detail=rejection_reason)
+
         # Use Gemini to extract projects
         projects = brain.extract_projects_from_resume(resume_text)
 
@@ -290,6 +334,8 @@ async def extract_projects(file: UploadFile = File(...)):
             "projects": projects,
             "resume_preview": resume_text[:500] + "..."
         }
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions as-is
     except Exception as e:
         print(f"❌ Error extracting projects: {e}")
         return {"status": "error", "message": str(e)}
@@ -324,6 +370,12 @@ async def analyze_portfolio(
 
     try:
         resume_text = ingest_pdf.parse_pdf(temp_filename)
+
+        # 🛡️ THE GATEKEEPER: Validate this is actually a resume/CV
+        is_valid, rejection_reason = brain.validate_is_resume(resume_text)
+        if not is_valid:
+            logger.warning(f"❌ Document rejected: {rejection_reason}")
+            raise HTTPException(status_code=400, detail=rejection_reason)
 
         # IMPORTANT: Only use the URL explicitly provided by user's project selection
         # Do NOT auto-scan resume for GitHub URLs - user chose a specific project

@@ -847,19 +847,14 @@ const Typewriter = ({ text, speed = 50, onComplete }: { text: string, speed?: nu
 };
 
 // --- VIEW 1: UPLOAD LANDING (Typewriter + Upload) ---
-const UploadLanding = ({ onUploadComplete }: { onUploadComplete: (file: File) => void }) => {
+const UploadLanding = ({ onUploadComplete, isValidating = false }: { onUploadComplete: (file: File) => void; isValidating?: boolean }) => {
   const [file, setFile] = useState<File | null>(null);
-  const [loading, setLoading] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
 
   const handleSubmit = () => {
     if (!file) return;
-    setLoading(true);
-    // Simulate upload/processing
-    setTimeout(() => {
-      setLoading(false);
-      onUploadComplete(file);
-    }, 1500);
+    // Pass file to parent for gatekeeper validation
+    onUploadComplete(file);
   };
 
   return (
@@ -900,13 +895,13 @@ const UploadLanding = ({ onUploadComplete }: { onUploadComplete: (file: File) =>
 
               <button
                 onClick={handleSubmit}
-                disabled={loading || !file}
+                disabled={isValidating || !file}
                 className="w-full bg-[#00FF41] text-black font-bold py-4 text-lg hover:bg-white transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 shadow-[0_0_30px_rgba(0,255,65,0.5)] hover:shadow-[0_0_50px_rgba(0,255,65,0.8)] animate-slide-up-fade opacity-0"
                 style={{ animationDelay: '0.9s', animationFillMode: 'forwards' }}
               >
-                {loading ? (
+                {isValidating ? (
                   <span className="flex items-center gap-3">
-                    <span className="animate-spin">⟳</span> INITIALIZING...
+                    <span className="animate-spin">⟳</span> 🛡️ GATEKEEPER SCANNING...
                   </span>
                 ) : (
                   <>INITIALIZE SYSTEM <ArrowRight size={20} /></>
@@ -1148,8 +1143,10 @@ const ProjectSelection = ({
             onProjectsExtracted(extractedProjects);
           }
         }
-      } catch (e) {
+      } catch (e: any) {
         console.error("Error extracting projects:", e);
+        // Gatekeeper already validated at upload - this shouldn't happen
+        // But handle gracefully just in case
         setProjects([]);
       } finally {
         setLoading(false);
@@ -2345,8 +2342,29 @@ export default function App() {
   const [selectedMode, setSelectedMode] = useState<'roast' | 'rewrite'>('roast');
   const [cachedProjects, setCachedProjectsState] = useState<Project[] | null>(null);
   const [currentFileKey, setCurrentFileKey] = useState<string>('');
+  const [gateError, setGateError] = useState<{ show: boolean; title: string; message: string }>({ show: false, title: '', message: '' });
+  const [validatingFile, setValidatingFile] = useState(false);
 
-  const handleUploadComplete = (file: File) => {
+  // Matrix-themed error messages for Gatekeeper
+  const getGateErrorMessage = (aiReason: string) => {
+    const reasonLower = aiReason.toLowerCase();
+
+    if (reasonLower.includes('menu') || reasonLower.includes('food') || reasonLower.includes('restaurant')) {
+      return { title: '🍕 WRONG PILL DETECTED', message: `Morpheus ordered a Resume, not a menu.\n\n"${aiReason}"\n\nUpload your actual Resume/CV.` };
+    }
+    if (reasonLower.includes('job description') || reasonLower.includes('job posting') || reasonLower.includes('hiring')) {
+      return { title: '🔄 WRONG SIDE, NEO', message: `This is a Job Description, not YOUR resume.\n\n"${aiReason}"\n\nWe need YOUR skills, not the employer's wishlist.` };
+    }
+    if (reasonLower.includes('invoice') || reasonLower.includes('receipt') || reasonLower.includes('bill')) {
+      return { title: '💰 WRONG DOCUMENT', message: `This looks like a financial document.\n\n"${aiReason}"\n\nUpload your Resume, not your expenses.` };
+    }
+    if (reasonLower.includes('book') || reasonLower.includes('article') || reasonLower.includes('story')) {
+      return { title: '📚 NICE TRY, NEO', message: `This appears to be a book or article.\n\n"${aiReason}"\n\nMorpheus needs your RESUME.` };
+    }
+    return { title: '🔴 INVALID DOCUMENT', message: `This doesn't look like a Resume/CV.\n\n"${aiReason}"\n\nPlease upload a valid Resume.` };
+  };
+
+  const handleUploadComplete = async (file: File) => {
     const newFileKey = generateFileKey(file);
 
     // Check if it's a different file - if so, clear old caches
@@ -2355,12 +2373,42 @@ export default function App() {
       setCachedProjectsState(null);
     }
 
-    // Check if we have cached projects for this file
+    // Check if we have cached projects for this file (skip validation if cached)
     const cached = getCachedProjects(newFileKey);
     if (cached) {
       console.log('📦 Using cached projects for:', file.name);
       setCachedProjectsState(cached);
+      setCurrentFileKey(newFileKey);
+      setUploadedFile(file);
+      setCurrentView('morpheus');
+      return;
     }
+
+    // 🛡️ THE GATEKEEPER - Validate at the gate BEFORE proceeding
+    setValidatingFile(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await axios.post("http://localhost:8000/validate_resume", formData);
+
+      if (!res.data.valid) {
+        console.log('❌ Gatekeeper rejected:', res.data.reason);
+        const errorMsg = getGateErrorMessage(res.data.reason);
+        setGateError({ show: true, ...errorMsg });
+        setValidatingFile(false);
+        return; // Don't proceed - stay at gate
+      }
+
+      console.log('✅ Gatekeeper approved - proceeding to Morpheus');
+    } catch (e: any) {
+      console.error('Gatekeeper error:', e);
+      const reason = e.response?.data?.reason || 'Failed to validate document';
+      const errorMsg = getGateErrorMessage(reason);
+      setGateError({ show: true, ...errorMsg });
+      setValidatingFile(false);
+      return;
+    }
+    setValidatingFile(false);
 
     setCurrentFileKey(newFileKey);
     setUploadedFile(file);
@@ -2435,8 +2483,43 @@ export default function App() {
         </button>
       </div>
 
+      {/* 🛡️ GATEKEEPER ERROR POPUP */}
+      {gateError.show && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-sm">
+          <div className="animate-error-glitch relative max-w-md w-full mx-4 border-2 border-red-500 bg-black/95 p-6 overflow-hidden">
+            {/* Scanline effect */}
+            <div
+              className="absolute inset-0 pointer-events-none opacity-30"
+              style={{ background: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,0,0,0.03) 2px, rgba(255,0,0,0.03) 4px)' }}
+            />
+            <div className="absolute left-0 right-0 h-[2px] bg-red-500/50 pointer-events-none" style={{ animation: 'scanlineError 3s linear infinite' }} />
+
+            <div className="relative z-10">
+              <h3 className="text-red-500 text-xl font-bold mb-4 tracking-wider" style={{ textShadow: '0 0 10px rgba(255,0,0,0.5)' }}>
+                {gateError.title}
+              </h3>
+              <p className="text-red-400 text-sm leading-relaxed whitespace-pre-line mb-6 font-mono">
+                {gateError.message}
+              </p>
+              <button
+                onClick={() => setGateError({ show: false, title: '', message: '' })}
+                className="w-full py-3 border-2 border-red-500 text-red-500 hover:bg-red-500 hover:text-black transition-all duration-300 font-bold tracking-wider"
+              >
+                ↩ TRY AGAIN
+              </button>
+            </div>
+
+            {/* Corner decorations */}
+            <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-red-500" />
+            <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-red-500" />
+            <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-red-500" />
+            <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-red-500" />
+          </div>
+        </div>
+      )}
+
       <main className="relative z-10">
-        {currentView === 'landing' && <UploadLanding onUploadComplete={handleUploadComplete} />}
+        {currentView === 'landing' && <UploadLanding onUploadComplete={handleUploadComplete} isValidating={validatingFile} />}
         {currentView === 'morpheus' && <MorpheusChoice onNavigate={setCurrentView} onModeSelect={setSelectedMode} />}
         {currentView === 'project-select' && (
           <ProjectSelection
