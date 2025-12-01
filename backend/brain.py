@@ -1,11 +1,16 @@
 import os
 import time
 import asyncio
+import logging
 import google.generativeai as genai
 from dotenv import load_dotenv
 import json
 
 load_dotenv()
+
+# --- LOGGING SETUP ---
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
@@ -13,13 +18,41 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 MODEL_NAME = "gemini-2.5-pro"
 LIVE_MODEL = "gemini-2.5-flash-preview-native-audio-dialog"  # For Live API
 
+# Configurable constants (instead of magic numbers)
+CONFIG = {
+    "TEMPERATURE": 0.7,
+    "TOP_P": 0.95,
+    "TOP_K": 64,
+    "MAX_OUTPUT_TOKENS": 8192,
+    "QUOTA_WAIT_TIME": 35,  # seconds to wait when all models are rate limited
+    "MAX_RETRIES": 2,
+}
+
 generation_config = {
-    "temperature": 0.7,
-    "top_p": 0.95,
-    "top_k": 64,
-    "max_output_tokens": 8192,
+    "temperature": CONFIG["TEMPERATURE"],
+    "top_p": CONFIG["TOP_P"],
+    "top_k": CONFIG["TOP_K"],
+    "max_output_tokens": CONFIG["MAX_OUTPUT_TOKENS"],
     "response_mime_type": "text/plain",
 }
+
+
+# --- CUSTOM EXCEPTIONS ---
+class GitRealError(Exception):
+    """Base exception for GitReal"""
+    pass
+
+class QuotaExceededError(GitRealError):
+    """Raised when all Gemini models are quota limited"""
+    pass
+
+class AnalysisError(GitRealError):
+    """Raised when analysis fails"""
+    pass
+
+class TTSError(GitRealError):
+    """Raised when text-to-speech fails"""
+    pass
 
 # Use Gemini 2.5 Flash
 model = genai.GenerativeModel(MODEL_NAME, generation_config=generation_config)
@@ -69,8 +102,8 @@ def gemini_generate_with_retry(model_instance, prompt, max_retries=2):
                 raise e
 
     # All models failed - wait and retry once more
-    print(f"   ⏳ All models quota limited. Waiting 35s...")
-    time.sleep(35)
+    logger.warning(f"All models quota limited. Waiting {CONFIG['QUOTA_WAIT_TIME']}s...")
+    time.sleep(CONFIG["QUOTA_WAIT_TIME"])
 
     # Final attempt with primary model after wait
     try:
@@ -101,8 +134,8 @@ def gemini_generate_json_with_retry(prompt, max_retries=2):
                 raise e
 
     # All failed - wait and retry
-    print(f"   ⏳ All models quota limited. Waiting 35s...")
-    time.sleep(35)
+    logger.warning(f"All models quota limited. Waiting {CONFIG['QUOTA_WAIT_TIME']}s...")
+    time.sleep(CONFIG["QUOTA_WAIT_TIME"])
 
     # Final attempt
     json_model = genai.GenerativeModel(FALLBACK_MODELS[0], generation_config=json_config)

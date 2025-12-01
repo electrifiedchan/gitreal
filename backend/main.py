@@ -3,10 +3,13 @@ import shutil
 import re
 import base64
 import io
+import time
+import logging
+from collections import OrderedDict
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import List, Optional
 from dotenv import load_dotenv
 
@@ -19,6 +22,10 @@ import brain
 
 load_dotenv()
 
+# --- LOGGING ---
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 app = FastAPI()
 
 # Initialize Deepgram
@@ -26,13 +33,13 @@ try:
     dg_key = os.getenv("DEEPGRAM_API_KEY")
     if dg_key and dg_key != "YOUR_DEEPGRAM_KEY_HERE":
         deepgram = DeepgramClient(api_key=dg_key)
-        print("✅ Deepgram Voice System Online")
+        logger.info("✅ Deepgram Voice System Online")
     else:
         deepgram = None
-        print("⚠️ Deepgram not configured: No API key")
+        logger.warning("⚠️ Deepgram not configured: No API key")
 except Exception as e:
     deepgram = None
-    print(f"⚠️ Deepgram not configured: {e}")
+    logger.warning(f"⚠️ Deepgram not configured: {e}")
 
 app.add_middleware(
     CORSMiddleware,
@@ -43,7 +50,72 @@ app.add_middleware(
 )
 
 DB = {}
-REPO_CACHE = {}
+
+
+# --- LRU CACHE WITH TTL ---
+class LRUCache:
+    """LRU Cache with size limit and TTL to prevent memory leaks"""
+
+    def __init__(self, max_size: int = 50, ttl_seconds: int = 3600):
+        self.cache = OrderedDict()
+        self.max_size = max_size
+        self.ttl = ttl_seconds  # Time-to-live in seconds
+        self.timestamps = {}
+
+    def get(self, key: str):
+        """Get item from cache, returns None if expired or not found"""
+        if key not in self.cache:
+            return None
+
+        # Check TTL
+        if time.time() - self.timestamps[key] > self.ttl:
+            self.delete(key)
+            return None
+
+        # Move to end (most recently used)
+        self.cache.move_to_end(key)
+        return self.cache[key]
+
+    def set(self, key: str, value):
+        """Set item in cache with eviction if needed"""
+        # If key exists, update it
+        if key in self.cache:
+            self.cache.move_to_end(key)
+            self.cache[key] = value
+            self.timestamps[key] = time.time()
+            return
+
+        # Evict oldest if at capacity
+        while len(self.cache) >= self.max_size:
+            oldest_key = next(iter(self.cache))
+            self.delete(oldest_key)
+            logger.debug(f"Cache evicted: {oldest_key}")
+
+        # Add new item
+        self.cache[key] = value
+        self.timestamps[key] = time.time()
+
+    def delete(self, key: str):
+        """Remove item from cache"""
+        if key in self.cache:
+            del self.cache[key]
+            del self.timestamps[key]
+
+    def clear(self):
+        """Clear all cache"""
+        self.cache.clear()
+        self.timestamps.clear()
+
+    def __contains__(self, key: str):
+        """Check if key exists and is not expired"""
+        return self.get(key) is not None
+
+    def __len__(self):
+        return len(self.cache)
+
+
+# Use LRU cache instead of plain dict (max 50 repos, 1 hour TTL)
+REPO_CACHE = LRUCache(max_size=50, ttl_seconds=3600)
 
 class ChatRequest(BaseModel):
     message: str
@@ -51,6 +123,39 @@ class ChatRequest(BaseModel):
 
 class RepoRequest(BaseModel):
     github_url: str
+
+    @field_validator('github_url')
+    @classmethod
+    def validate_github_url(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError('GitHub URL is required')
+        v = v.strip()
+        # Must be a GitHub URL
+        if 'github.com' not in v.lower():
+            raise ValueError('Must be a valid GitHub URL (e.g., https://github.com/user/repo)')
+        # Basic pattern check
+        pattern = r'(https?://)?(www\.)?github\.com/[\w\-\.]+/[\w\-\.]+'
+        if not re.match(pattern, v, re.IGNORECASE):
+            raise ValueError('Invalid GitHub URL format')
+        return v
+
+
+# Input validation helpers
+ALLOWED_FILE_EXTENSIONS = {'.pdf'}
+MAX_FILE_SIZE_MB = 10
+
+def validate_file_upload(file: UploadFile) -> tuple[bool, str]:
+    """Validate uploaded file"""
+    if not file or not file.filename:
+        return False, "No file provided"
+
+    # Check extension
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ALLOWED_FILE_EXTENSIONS:
+        return False, f"Invalid file type. Allowed: {', '.join(ALLOWED_FILE_EXTENSIONS)}"
+
+    return True, ""
+
 
 def extract_github_details(url):
     """
@@ -159,7 +264,13 @@ async def extract_projects(file: UploadFile = File(...)):
     Step 1: Upload resume, extract project names and GitHub URLs using Gemini OCR
     Returns list of projects for user to choose from
     """
-    print(f"📥 Extracting projects from resume...")
+    # Validate file upload
+    is_valid, error_msg = validate_file_upload(file)
+    if not is_valid:
+        logger.warning(f"Invalid file upload: {error_msg}")
+        raise HTTPException(status_code=400, detail=error_msg)
+
+    logger.info(f"📥 Extracting projects from resume: {file.filename}")
     temp_filename = f"temp_{file.filename}"
 
     try:
@@ -193,8 +304,20 @@ async def analyze_portfolio(
     github_url: Optional[str] = Form(None),
     project_name: Optional[str] = Form(None)
 ):
-    print(f"📥 Received Analysis Request.")
-    print(f"   📁 Selected Project: {project_name or 'None specified'}")
+    # Validate file upload
+    is_valid, error_msg = validate_file_upload(file)
+    if not is_valid:
+        logger.warning(f"Invalid file upload: {error_msg}")
+        raise HTTPException(status_code=400, detail=error_msg)
+
+    # Validate GitHub URL if provided
+    if github_url and github_url.strip() and github_url != "null":
+        github_url = github_url.strip()
+        if 'github.com' not in github_url.lower():
+            raise HTTPException(status_code=400, detail="Invalid GitHub URL format")
+
+    logger.info(f"📥 Received Analysis Request.")
+    logger.info(f"   📁 Selected Project: {project_name or 'None specified'}")
     temp_filename = f"temp_{file.filename}"
     with open(temp_filename, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
@@ -216,15 +339,16 @@ async def analyze_portfolio(
             owner, repo, branch = extract_github_details(target_url)
             if owner and repo:
                 cache_key = f"{owner}/{repo}/{branch}"
-                if cache_key in REPO_CACHE:
-                    print(f"   ⚡ Cache Hit: {cache_key}")
-                    code_context = REPO_CACHE[cache_key]
+                cached = REPO_CACHE.get(cache_key)
+                if cached:
+                    logger.info(f"   ⚡ Cache Hit: {cache_key}")
+                    code_context = cached
                 else:
-                    print(f"   💻 Target: {owner}/{repo} (Branch: {branch or 'Auto'})")
+                    logger.info(f"   💻 Target: {owner}/{repo} (Branch: {branch or 'Auto'})")
                     code_context = ingest_github.fetch_repo_content(owner, repo, branch)
                     # Cache if valid
                     if code_context and len(code_context) > 100:
-                        REPO_CACHE[cache_key] = code_context
+                        REPO_CACHE.set(cache_key, code_context)
             else:
                 code_context = "Error: Invalid URL extracted."
         else:
@@ -286,15 +410,16 @@ async def add_repo_context(request: RepoRequest):
              raise HTTPException(status_code=400, detail="Invalid GitHub URL")
         
         cache_key = f"{owner}/{repo}/{branch}"
-        if cache_key in REPO_CACHE:
-            print(f"   ⚡ Cache Hit: {cache_key}")
-            code_context = REPO_CACHE[cache_key]
+        cached = REPO_CACHE.get(cache_key)
+        if cached:
+            logger.info(f"   ⚡ Cache Hit: {cache_key}")
+            code_context = cached
         else:
-            print(f"   💻 Fetching: {owner}/{repo} (Branch: {branch or 'Default'})")
+            logger.info(f"   💻 Fetching: {owner}/{repo} (Branch: {branch or 'Default'})")
             # Pass the extracted branch to the scraper
             code_context = ingest_github.fetch_repo_content(owner, repo, branch)
             if code_context and len(code_context) >= 100:
-                REPO_CACHE[cache_key] = code_context
+                REPO_CACHE.set(cache_key, code_context)
 
         if not code_context or len(code_context) < 100:
             return {"status": "error", "bullets": "⚠️ ACCESS DENIED: Repo is empty, Private, or Branch not found."}

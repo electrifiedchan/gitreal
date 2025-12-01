@@ -1704,6 +1704,10 @@ const ChatInterface = ({ onNavigate, uploadedFile, mode, selectedProject }: { on
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const interviewInitialized = useRef(false);
   const previousMode = useRef(mode);
+
+  // Keep a ref to latest messages to avoid stale closure in async functions
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
 
   // Check for interview loading
@@ -1823,7 +1827,9 @@ const ChatInterface = ({ onNavigate, uploadedFile, mode, selectedProject }: { on
     setIsTyping(true); // Show typing indicator
 
     try {
-      const history = messages.filter(m => m.type !== 'system').map(m => ({ type: m.type, text: m.text }));
+      // Use ref to get latest messages (avoid stale closure)
+      const currentMessages = messagesRef.current;
+      const history = currentMessages.filter(m => m.type !== 'system').map(m => ({ type: m.type, text: m.text }));
       const res = await axios.post("http://localhost:8000/chat", {
         message: textToSend,
         history: history
